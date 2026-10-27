@@ -15,7 +15,7 @@
 - Plugin name `devflow`; local marketplace name `devflow-kit`. Commands: `/devflow:save-work`, `/devflow:continue-work`, `/devflow:init-workflow`, `/devflow:document-feature`, `/devflow:demo-guide`. (§17.1)
 - The guard is **pure Python standard library** — no third-party imports, ever. (§3)
 - The guard **fails open (exit 0)** on any error, missing env, missing structure, or `stop_hook_active`. It must never wedge a session. (§3)
-- The guard makes **exactly two git calls total** (one `git ls-files`, one `git ls-tree -r HEAD`), both scoped to the phase dir; all per-task checks are Python set lookups. (§3.2)
+- The guard makes **exactly one git call total** (`git ls-tree -r --name-only HEAD`, scoped to the phase dir, 10 s timeout); all per-task checks are Python set lookups. (§3.2) *(As-built: the plan's Task 2 code originally included a second, dead `git ls-files` call; it was dropped during Task 2 review — fix `1064f6c`.)*
 - A file satisfies the trail only if it is in the **committed HEAD set**, not merely staged. (§3)
 - All content `init-workflow` stamps into a project is wrapped in idempotency markers `<!-- devflow:begin <id> v<N> -->` … `<!-- devflow:end <id> -->`; refresh-mode touches only bytes between a matching pair. (§11.2)
 - Commands follow the **graceful-degradation** rule: report rather than fail; never leave a half-state. (§10)
@@ -113,6 +113,8 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 2: The Stop-hook guard (TDD) + launchers + hooks.json
 
 This is the only executable component. Build it test-first. The guard reads the project root from `$CLAUDE_PROJECT_DIR` (fallback: cwd), reads the SDD ledger, and blocks ending a turn when a `complete` task lacks its committed trail.
+
+> **AS-BUILT NOTE (close-out):** the reference code below is the pre-review version. During Task 2 review (fix commit `1064f6c`) three corrections landed in the shipped guard: (1) `main()` also coerces a non-dict JSON stdin payload to `{}` and wraps root-resolution in the broad try, so it truly fails open on any stdin/path error; (2) the dead `git ls-files` "tracked" call was removed — the guard makes a single `git ls-tree -r HEAD` call; (3) `present_glob` requires a digit immediately after `task-NN-r`. The shipped tests total 11. See `hooks/devlog_guard.py` + `tests/test_devlog_guard.py` for the authoritative version.
 
 **Files:**
 - Create: `hooks/devlog_guard.py`

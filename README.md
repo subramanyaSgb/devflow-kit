@@ -21,7 +21,15 @@ guard that enforces it, and a one-command project bootstrap.
 | `/devflow:document-feature <name>` | Write a code-grounded guidebook for a feature/module |
 | `/devflow:demo-guide <name>` | Write a client-facing walkthrough of a feature |
 
-The Stop-hook guard activates only in a repo that has `docs/devlog/` + an SDD ledger; it is a
-silent no-op everywhere else. Optional per-project config: `.devflow/guard.json`.
+The Stop-hook guard activates only in a repo that has `docs/devlog/` + an SDD ledger (a
+`.superpowers/sdd/progress.md` carrying a `Devlog-dir:` line); it is a silent no-op everywhere else.
+Optional per-project config: `.devflow/guard.json`.
+
+## Platform
+
+Built and wired for Windows: the Stop hook runs `hooks/run-guard.cmd`, which finds a Python 3
+(`py -3` / `python` / `python3`) and fails open if none is present. A POSIX launcher
+`hooks/run-guard.sh` is included; mac/Linux users add a second `Stop` entry in `hooks/hooks.json`
+pointing at it. The guard itself is pure Python standard library.
 
 See `docs/superpowers/specs/2026-10-27-devflow-methodology-kit-design.md` for the full design.

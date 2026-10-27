@@ -38,8 +38,12 @@ List every path you will create or touch and show it to the user before writing 
      today's date), `sessions/<today>.md`, `HANDOFF.md` (from seed). Create `<phase>/` lazily when
      work starts.
    - Best-effort project-memory seed (skip silently if the memory dir is unwritable).
-   - Add `.devflow/` to `.gitignore` (guard debug log + local config live there; `guard.json` may be
-     committed if the user wants project-wide config).
+   - Add `.devflow/` to `.gitignore` (the guard's debug log lives there). If the user wants
+     project-wide guard config committed, also add a negation so only that one file is tracked:
+     ```
+     .devflow/
+     !/.devflow/guard.json
+     ```
 5. Report findings + what was created + the next action
    ("run `/devflow:save-work` to pause; start work via `superpowers:brainstorming`").
 

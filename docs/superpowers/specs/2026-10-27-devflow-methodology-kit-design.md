@@ -158,7 +158,8 @@ everything else and says so rather than failing.
     `tests/task-NN-tests.txt`.
   - **Close-out / controller** tasks (complete-line contains "close-out" or "controller") require
     report + review only.
-  - Task numbers may be `NN` or `N`; the guard checks both spellings for tolerance.
+  - Ledger task numbers may be written `N` or `NN` (the parse regex matches either); the committed
+    trail **filenames** are always zero-padded `task-NN-…`.
 - On any gap: print `{"decision":"block","reason": "<which files, which phase dir>"}` and exit 0,
   listing exactly what to mirror + commit.
 - **Fails open (exit 0) on every unexpected error** — a bug in the guard can never wedge a session.
@@ -185,10 +186,11 @@ locates a working Python 3 and execs the guard:
 - The guard itself is **pure Python standard library** (no third-party imports) so no environment
   setup is ever required.
 
-**Committed, not merely staged.** The guard tests a file with `git ls-files --error-unmatch`
-(tracked) *and* `git log -1 --format=%H -- <path>` returns non-empty (it exists in history). A file
-that is only `git add`-ed but never committed therefore does **not** satisfy the trail — matching the
-rule's intent that the trail is *committed* with the work. Any git error → fail open.
+**Committed, not merely staged.** The guard builds the set of files committed under the phase dir in
+HEAD (`git ls-tree -r --name-only HEAD -- <phase_dir>`) and a task's required files must appear in
+**that** set. A file that is only `git add`-ed but never committed is absent from HEAD, so it does
+**not** satisfy the trail — matching the rule's intent that the trail is *committed* with the work.
+Any git error → fail open. (As-built: this is the guard's single git call — see §3.2.)
 
 ### 3.1 Optional per-project guard config
 
@@ -215,12 +217,13 @@ keys are ignored; values are type- and size-checked (lists of short strings, one
 ### 3.2 Guard implementation notes (performance & debuggability)
 
 - **Stay inside the 30 s timeout — batch, don't loop subprocesses.** The guard makes exactly
-  **two** git calls total, not 2–5 per task: one `git ls-files -- <phase_dir>` (everything git
-  tracks under the phase dir) and one `git ls-tree -r --name-only HEAD -- <phase_dir>` (everything
-  committed in HEAD under it). Both results are read into Python sets; every per-task file check is
-  then a set membership test. A task's file must appear in the **committed** set (HEAD), which
-  subsumes the "committed, not merely staged" rule in one pass. Cost is O(1) git calls regardless of
-  task count, so a 40-task phase is as fast as a 1-task phase.
+  **one** git call total (10 s timeout), not 2–5 per task: `git ls-tree -r --name-only HEAD --
+  <phase_dir>` (everything committed in HEAD under the phase dir). The result is read into a Python
+  set; every per-task file check is then a set-membership test. A task's file must appear in that
+  **committed** set, which implements the "committed, not merely staged" rule directly. Cost is O(1)
+  git calls regardless of task count, so a 40-task phase is as fast as a 1-task phase. (The design
+  originally sketched a second `git ls-files` "tracked" call; it was dead — `committed ⊆ tracked`
+  for this check — and was dropped during Task 2 review, fix commit `1064f6c`.)
 - **Fail-open diagnostics.** On any unexpected exception the guard still exits 0, but when
   `DEVFLOW_GUARD_DEBUG=1` it appends a one-line reason (timestamp + exception) to
   `<root>/.devflow/guard.log`, so a "why didn't the guard fire?" question is answerable. With the

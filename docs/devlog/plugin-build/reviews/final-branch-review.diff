@@ -1,0 +1,913 @@
+# Review package: 0dfe50e..e6f1c31
+
+## Commits
+e6f1c31 feat(skill): devflow-method router skill
+dcfe411 feat(command): /devflow:document-feature + /devflow:demo-guide (generalized docs)
+96c6db5 feat(command): /devflow:init-workflow two-mode onboarding (root resolution, refresh, fallback)
+bf8e050 feat(command): /devflow:continue-work resume-from-HANDOFF with restart-failure handling
+94e538e feat(command): /devflow:save-work with exhaustive stale-data sweep + HANDOFF schema
+ca273fd feat(templates): CLAUDE.md pattern, devlog scaffold, dev-workflow contract, guard config
+2f6af75 test(guard): make diff-glob regression test exercise the digit boundary (task-NN-r<non-digit>)
+1064f6c fix(guard): fail open on non-object stdin; drop dead ls-files call; tighten diff glob; shorter git timeouts
+e020f0c feat(guard): project-agnostic fail-open devlog Stop-hook + launchers + tests
+df214b0 feat(plugin): devflow manifest + marketplace + README
+
+## Files changed
+ .claude-plugin/marketplace.json         |   7 ++
+ .claude-plugin/plugin.json              |   8 ++
+ README.md                               |  27 +++++
+ commands/continue-work.md               |  37 +++++++
+ commands/demo-guide.md                  |  12 +++
+ commands/document-feature.md            |  13 +++
+ commands/init-workflow.md               |  55 ++++++++++
+ commands/save-work.md                   |  57 +++++++++++
+ hooks/devlog_guard.py                   | 176 ++++++++++++++++++++++++++++++++
+ hooks/hooks.json                        |  16 +++
+ hooks/run-guard.cmd                     |   6 ++
+ hooks/run-guard.sh                      |   6 ++
+ skills/devflow-method/SKILL.md          |  23 +++++
+ templates/CLAUDE.md.tmpl                |  49 +++++++++
+ templates/HANDOFF.seed.md               |  19 ++++
+ templates/claude-devworkflow-section.md |  16 +++
+ templates/decisions.md                  |   9 ++
+ templates/devlog-README.md              |  22 ++++
+ templates/guard.json                    |   7 ++
+ templates/phase-README.md               |  13 +++
+ templates/session.tmpl.md               |   4 +
+ tests/test_devlog_guard.py              | 159 +++++++++++++++++++++++++++++
+ 22 files changed, 741 insertions(+)
+
+## Diff
+diff --git a/.claude-plugin/marketplace.json b/.claude-plugin/marketplace.json
+new file mode 100644
+index 0000000..14e3b1b
+--- /dev/null
++++ b/.claude-plugin/marketplace.json
+@@ -0,0 +1,7 @@
++{
++  "name": "devflow-kit",
++  "owner": { "name": "Deevia" },
++  "plugins": [
++    { "name": "devflow", "source": "." }
++  ]
++}
+diff --git a/.claude-plugin/plugin.json b/.claude-plugin/plugin.json
+new file mode 100644
+index 0000000..6081b3c
+--- /dev/null
++++ b/.claude-plugin/plugin.json
+@@ -0,0 +1,8 @@
++{
++  "name": "devflow",
++  "version": "0.1.0",
++  "description": "Portable development methodology: session handoffs, a committed devlog trail, a fail-open Stop-hook guard, and a two-mode project bootstrap.",
++  "author": { "name": "Deevia" },
++  "license": "MIT",
++  "keywords": ["workflow", "devlog", "handoff", "tdd", "documentation", "bootstrap"]
++}
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..7c24957
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,27 @@
++# devflow
++
++A portable Claude Code plugin that gives any project the HMD development workflow:
++save/continue session handoffs, a committed `docs/devlog/` trail, a fail-open Stop-hook
++guard that enforces it, and a one-command project bootstrap.
++
++## Install (local)
++
++```
++/plugin marketplace add ~/Desktop/devflow-kit
++/plugin install devflow@devflow-kit
++```
++
++## Commands
++
++| Command | What it does |
++|---|---|
++| `/devflow:init-workflow` | Bootstrap this repo — onboard an existing codebase or start a greenfield project |
++| `/devflow:save-work` | Snapshot work, sweep every living doc for stale data, write `HANDOFF.md` before `/clear` |
++| `/devflow:continue-work` | Resume exactly where the last session stopped, from `HANDOFF.md` |
++| `/devflow:document-feature <name>` | Write a code-grounded guidebook for a feature/module |
++| `/devflow:demo-guide <name>` | Write a client-facing walkthrough of a feature |
++
++The Stop-hook guard activates only in a repo that has `docs/devlog/` + an SDD ledger; it is a
++silent no-op everywhere else. Optional per-project config: `.devflow/guard.json`.
++
++See `docs/superpowers/specs/2026-10-27-devflow-methodology-kit-design.md` for the full design.
+diff --git a/commands/continue-work.md b/commands/continue-work.md
+new file mode 100644
+index 0000000..2d7073b
+--- /dev/null
++++ b/commands/continue-work.md
+@@ -0,0 +1,37 @@
++---
++description: Resume work exactly where the last session left off, from HANDOFF — zero context loss
++---
++
++Resume from the saved handoff with zero context loss. Hard checklist — every step in order.
++
++## 1. Read the resume contract
++Read `docs/devlog/HANDOFF.md`. If it is absent, empty, or its Timestamp is far behind the latest
++commit, say so and ask the user where to resume — do NOT guess.
++
++## 2. Load the context it points to
++CLAUDE.md + any project memory are auto-loaded. Read the active ledger
++(`docs/devlog/<phase>/progress.md`), the plan, and the spec the handoff names. If a task is
++mid-flight, read its brief/report/review.
++
++## 3. Verify git state matches
++`git branch --show-current`, `git log --oneline -6`. Branch must match. HEAD should be the handoff's
++noted commit or a later commit on the same branch. Flag ONLY if the branch differs or history
++rewound below the noted commit. If a `wip(save_work)` commit is at HEAD and the handoff says the
++task needs more edits → `git reset --soft HEAD~1` to restore the WIP to the working tree.
++
++## 4. Re-establish the environment
++Restart the background processes from the contract's **Restart commands** (run in background).
++Confirm any **Stateful** revision (e.g. a migration) matches; apply it if the handoff says to.
++**If a restart command fails, report the failing command and continue with the rest — do not loop.**
++
++## 5. Reconcile reality with the handoff
++Run the quickest proof (a named test / a commit exists). If a check contradicts the handoff, STOP
++and surface the specific mismatch before proceeding.
++
++## 6. Execute the EXACT NEXT ACTION
++Do the single next action from the handoff, then continue the normal loop (implement → review →
++fix → update ledger per task). Keep going autonomously; stop only for a genuine blocker or a
++user decision.
++
++## 7. First, report (2–3 lines)
++"Resuming: <phase>/<task>. State: <one line>. Next action: <X>." Then proceed.
+diff --git a/commands/demo-guide.md b/commands/demo-guide.md
+new file mode 100644
+index 0000000..7391186
+--- /dev/null
++++ b/commands/demo-guide.md
+@@ -0,0 +1,12 @@
++---
++description: Write a client-facing walkthrough of ONE feature. Docs only; never changes code.
++---
++
++Produce (or update) `docs/demo-guide/<name>.md` for the feature named in the argument — written for a
++client/stakeholder audience, not engineers.
++
++1. Trace the feature in the real code so every claim is true (no invented behavior).
++2. Write a **speaking-script walkthrough**: what to show, in what order, what to say, what the
++   audience sees, and the value each step demonstrates.
++3. Note any caveat an operator should know (approximations, data freshness, access needed).
++Documentation only — never change app code.
+diff --git a/commands/document-feature.md b/commands/document-feature.md
+new file mode 100644
+index 0000000..44fd5c9
+--- /dev/null
++++ b/commands/document-feature.md
+@@ -0,0 +1,13 @@
++---
++description: Write a code-grounded guidebook for ONE feature/module. Docs only; never changes code.
++---
++
++Produce (or update) `docs/guidebook/<name>.md` for the feature named in the argument.
++
++1. **Discuss, grounded in code.** Trace the feature end-to-end (entry point → logic → data → UI/output),
++   reading the real files. Note exact paths. List anything that looks wrong or stale.
++2. **Fix issues with permission.** If you find a real defect, describe it and ask before changing code.
++   This command's deliverable is the doc, not code changes.
++3. **Write the guide** → `docs/guidebook/<name>.md`: what the feature is, how it works (with
++   `path:line` references), inputs/outputs, configuration, edge cases, and how to verify it.
++Keep it accurate to the current code — no aspirational claims.
+diff --git a/commands/init-workflow.md b/commands/init-workflow.md
+new file mode 100644
+index 0000000..f2cf3c2
+--- /dev/null
++++ b/commands/init-workflow.md
+@@ -0,0 +1,55 @@
++---
++description: Bootstrap this repo for devflow — onboard an existing codebase or start greenfield
++---
++
++Set up (or refresh) the devflow workflow in the current repository. The plugin's templates are at
++`${CLAUDE_PLUGIN_ROOT}/templates/`. Be non-destructive and idempotent: safe to re-run.
++
++## 0. Fix the project root
++Resolve the root as `git rev-parse --show-toplevel` (or the current dir if not a repo). In a
++monorepo, confirm with the user whether they mean the repo root or a sub-package. Never write
++outside the chosen root.
++
++## 1. Detect & confirm mode
++Heuristic: source files / populated git history / a manifest (`package.json`, `pyproject.toml`,
++`go.mod`, `Cargo.toml`, …) ⇒ likely **existing**; otherwise **new**. Always confirm with the user.
++
++## 2. Idempotency / refresh
++If a `devflow:` marker already exists in `CLAUDE.md` or `docs/devlog/README.md` exists → **refresh
++mode**: report what is present, offer to update managed marker-sections in place (only the bytes
++between a matching begin/end pair), and create only what is missing. Never overwrite user content.
++
++## 3. Pre-flight
++List every path you will create or touch and show it to the user before writing anything.
++
++## EXISTING → onboard
++1. Ask what the project is and what kind (1–2 questions).
++2. Read the code **bounded**: structure, languages/frameworks, entry points, run story, test story,
++   key modules, integrations, landmines. Use the `Explore` agent for fan-out; read
++   manifests/config/CI directly; sample, don't read every file. Summarize findings back for
++   correction before writing.
++3. Clarify, one question at a time — only what the code can't answer: domain terms, exact run/test
++   commands, deploy story, conventions, gotchas, the commit-trailer attribution.
++4. Generate the grounded trail (each managed section wrapped in `devflow:*` markers from templates):
++   - Fill `CLAUDE.md` from `templates/CLAUDE.md.tmpl` + `claude-devworkflow-section.md`, substituting
++     project name/goal/architecture/run/test/trailer from findings + answers. If a CLAUDE.md exists,
++     insert only the marker-sections and leave the rest byte-for-byte.
++   - Scaffold `docs/devlog/`: `README.md` (from template), `decisions.md` (seed decision 1 with
++     today's date), `sessions/<today>.md`, `HANDOFF.md` (from seed). Create `<phase>/` lazily when
++     work starts.
++   - Best-effort project-memory seed (skip silently if the memory dir is unwritable).
++   - Add `.devflow/` to `.gitignore` (guard debug log + local config live there; `guard.json` may be
++     committed if the user wants project-wide config).
++5. Report findings + what was created + the next action
++   ("run `/devflow:save-work` to pause; start work via `superpowers:brainstorming`").
++
++## NEW → greenfield
++1. Ask what the user wants to build (enough to name the project + its goal).
++2. Scaffold `docs/devlog/` + a `CLAUDE.md` skeleton (goal + standard sections, marked to grow) +
++   `decisions.md` seed + `sessions/<today>.md` + `HANDOFF.md` seed + best-effort memory seed.
++3. Hand into the superpowers loop: invoke `superpowers:brainstorming` for the first feature (→
++   `writing-plans` → subagent-driven implementation). From task 1 the devlog trail + guard are live.
++   **If the superpowers plugin is not installed**, say so, point the user at installing it, and fall
++   back to a minimal inline brainstorm→plan→build outline so work still proceeds.
++
++Both modes converge: save-work / continue-work / guard / devlog all live.
+diff --git a/commands/save-work.md b/commands/save-work.md
+new file mode 100644
+index 0000000..faef694
+--- /dev/null
++++ b/commands/save-work.md
+@@ -0,0 +1,57 @@
++---
++description: Snapshot work, sweep every living doc for stale data, write HANDOFF before /clear
++---
++
++Produce a COMPLETE, loss-less handoff so a fresh session resumes at the exact same point.
++Hard checklist — do every step in order; the bar is "no information missed, no stale data."
++
++Read the project's `CLAUDE.md` "Dev workflow (devflow)" block first for the **commit trailer**,
++**push policy**, **restart commands**, **stateful resources**, and **scratch ledger** path. Use
++those values throughout. If a field is missing, note it and proceed.
++
++## 1. Block on in-flight subagents
++If any Agent/Task you dispatched is still running, STOP and tell the user to let it finish or
++cancel — a running agent's partial work cannot be frozen.
++
++## 2. Survey true state
++`git status --short`, `git branch --show-current`, `git log --oneline -6`. Identify the active
++phase, plan, spec, ledger, and the **exact task + sub-step** in progress (specific, not "Task 4"
++but "Task 4 implemented, review not run" etc.). List background processes started and any stateful
++revision (from the contract).
++
++## 3. Preserve uncommitted work
++- Dirty tree → stage and commit as `wip(save_work): <one line>` with the contract's commit trailer;
++  record the hash. **Secret safety:** before staging, respect `.gitignore` and check for `.env`/key
++  files/high-entropy tokens — if any would be staged, pause and ask.
++- Clean tree → note "tree clean, no WIP".
++- Never `git reset --hard` / `checkout --` / `clean` / `stash drop`.
++- Not a git repo / detached HEAD / mid-merge → stop and say so; still write HANDOFF (step 5).
++
++## 4. Exhaustive stale-data sweep (the core guarantee)
++After save-work, **no living doc may contradict the current code/state.** For every term the
++session **removed, renamed, re-pathed, re-scoped, or shipped**, grep it across every living doc and
++fix each hit. Discover the project's actual living docs — don't assume a fixed list:
++- `CLAUDE.md` (goal, architecture, run/test, decisions table, dev-workflow block, any version line)
++- project memory + its index, if present (best-effort)
++- `docs/devlog/decisions.md`
++- spec/plan **status** (delivered → DELIVERED/LIVE; superseded → marked, never deleted)
++- `docs/guidebook/*`, `docs/demo-guide/*`
++- release / changelog / deploy / rollback notes
++- the active ledger `docs/devlog/<phase>/progress.md`
++- the day's session file `docs/devlog/sessions/<today>.md` (append, don't overwrite)
++The bar is "no stale data anywhere," not "I updated the obvious file."
++
++## 5. Write the resume contract → `docs/devlog/HANDOFF.md` (overwrite)
++Use the labelled schema: Timestamp, Branch, HEAD, WIP-commit (hash/none), Phase, Plan, Spec,
++Ledger, **Next-action** (one concrete executable step — never vague), Task-status, Restart (exact
++commands/none), Stateful (revision/none), Open-question (or none), and the footer
++`Resume with: /devflow:continue-work`.
++
++## 6. Commit and verify
++Commit the handoff + doc updates as `docs(handoff): save_work snapshot — <phase/task>` with the
++trailer. Confirm `git status --short` is empty. Push only if the contract's push policy names a
++remote and it is reachable; otherwise note "not pushed".
++
++## 7. Report (3–5 lines)
++Where things stand, the single next action, whether a WIP commit was made, then:
++"Ready to `/clear`. In the new session, run `/devflow:continue-work`."
+diff --git a/hooks/devlog_guard.py b/hooks/devlog_guard.py
+new file mode 100644
+index 0000000..51b6a78
+--- /dev/null
++++ b/hooks/devlog_guard.py
+@@ -0,0 +1,176 @@
++#!/usr/bin/env python3
++"""Stop-hook guard: block ending a turn until each `complete` SDD task has its
++committed devlog trail. Project-agnostic, pure stdlib, fails open on any error.
++
++Reads the project root from $CLAUDE_PROJECT_DIR (fallback: cwd). Spec:
++docs/superpowers/specs/2026-10-27-devflow-methodology-kit-design.md (§3, §11)."""
++from __future__ import annotations
++
++import datetime as _dt
++import json
++import os
++import pathlib
++import re
++import subprocess
++import sys
++
++DEFAULTS = {
++    "scratch_ledger": ".superpowers/sdd/progress.md",
++    "required_normal": ["brief", "report", "review", "diff", "tests"],
++    "required_closeout": ["report", "review"],
++    "closeout_keywords": ["close-out", "closeout", "controller"],
++    "enabled": True,
++}
++
++TASK_RE = re.compile(r"^Task\s+(\d+)\s*:\s*(\w[\w-]*)\b(.*)$", re.I | re.M)
++DEVLOG_DIR_RE = re.compile(r"^Devlog-dir:\s*(\S+)\s*$", re.I | re.M)
++
++
++def _debug(root: pathlib.Path, msg: str) -> None:
++    if os.environ.get("DEVFLOW_GUARD_DEBUG") != "1":
++        return
++    try:
++        d = root / ".devflow"
++        d.mkdir(exist_ok=True)
++        with (d / "guard.log").open("a", encoding="utf-8") as fh:
++            fh.write(f"{_dt.datetime.now().isoformat()} {msg}\n")
++    except Exception:
++        pass
++
++
++def _load_config(root: pathlib.Path) -> dict:
++    cfg = dict(DEFAULTS)
++    p = root / ".devflow" / "guard.json"
++    try:
++        if p.exists():
++            raw = json.loads(p.read_text(encoding="utf-8", errors="ignore"))
++            if isinstance(raw, dict):
++                for k, v in raw.items():
++                    if k in DEFAULTS and type(v) is type(DEFAULTS[k]):
++                        cfg[k] = v
++    except Exception as e:
++        _debug(root, f"config fallback: {e}")
++    return cfg
++
++
++def _git_set(root: pathlib.Path, args: list[str]) -> set[str]:
++    try:
++        r = subprocess.run(["git", *args], cwd=str(root),
++                           capture_output=True, text=True, timeout=10)
++        if r.returncode != 0:
++            return set()
++        return {ln.strip().replace("\\", "/") for ln in r.stdout.splitlines() if ln.strip()}
++    except Exception as e:
++        _debug(root, f"git {args[:2]} failed: {e}")
++        return set()
++
++
++def _required_files(n: int, kinds: list[str]) -> list[tuple[str, str]]:
++    """Return (label, kind) pairs; kind 'diff' is a glob-prefix, others exact."""
++    nn = f"{n:02d}"
++    out = []
++    for kind in kinds:
++        if kind == "report":
++            out.append((f"task-{nn}-report.md", "exact"))
++        elif kind == "review":
++            out.append((f"task-{nn}-review.md", "exact"))
++        elif kind == "brief":
++            out.append((f"task-{nn}-brief.md", "exact"))
++        elif kind == "tests":
++            out.append((f"tests/task-{nn}-tests.txt", "exact"))
++        elif kind == "diff":
++            out.append((f"reviews/task-{nn}-r", "glob"))   # any reviews/task-NN-r*.diff
++    return out
++
++
++def evaluate(root: pathlib.Path) -> list[str]:
++    """Pure check: return a list of gap messages (empty = clean/no-op)."""
++    cfg = _load_config(root)
++    if not cfg["enabled"]:
++        return []
++    ledger = root / cfg["scratch_ledger"]
++    devlog = root / "docs" / "devlog"
++    if not ledger.exists() or not devlog.exists():
++        return []
++    try:
++        text = ledger.read_text(encoding="utf-8", errors="ignore")
++    except Exception as e:
++        _debug(root, f"ledger read: {e}")
++        return []
++
++    m = DEVLOG_DIR_RE.search(text)
++    if not m:
++        return []
++    phase_dir = m.group(1).rstrip("/").replace("\\", "/")
++
++    completed: dict[int, str] = {}
++    for tm in TASK_RE.finditer(text):
++        n, status, rest = int(tm.group(1)), tm.group(2).lower(), tm.group(3).lower()
++        if status == "complete":
++            completed.setdefault(n, "")
++            completed[n] += " " + rest
++    if not completed:
++        return []
++
++    committed = _git_set(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", phase_dir])
++
++    def present_exact(rel: str) -> bool:
++        full = f"{phase_dir}/{rel}"
++        return full in committed
++
++    def present_glob(prefix: str) -> bool:
++        full = f"{phase_dir}/{prefix}"
++        for f in committed:
++            if f.startswith(full) and f.endswith(".diff"):
++                rest = f[len(full):]
++                if rest[:1].isdigit():
++                    return True
++        return False
++
++    missing: list[str] = []
++    for n in sorted(completed):
++        line = completed[n]
++        is_closeout = any(k in line for k in cfg["closeout_keywords"])
++        kinds = cfg["required_closeout"] if is_closeout else cfg["required_normal"]
++        gaps = []
++        for label, kind in _required_files(n, kinds):
++            ok = present_glob(label) if kind == "glob" else present_exact(label)
++            if not ok:
++                gaps.append(label + ("*.diff" if kind == "glob" else ""))
++        if gaps:
++            missing.append(f"Task {n}: no committed {', '.join(gaps)} in {phase_dir}/")
++    return missing
++
++
++def main() -> None:
++    try:
++        payload = json.load(sys.stdin)
++    except Exception:
++        payload = {}
++    if not isinstance(payload, dict):
++        payload = {}
++    if payload.get("stop_hook_active"):
++        sys.exit(0)
++    try:
++        root = pathlib.Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
++        missing = evaluate(root)
++    except Exception as e:
++        try:
++            _debug(pathlib.Path(os.getcwd()), f"main crashed: {e}")
++        except Exception:
++            pass
++        sys.exit(0)
++    if missing:
++        reason = (
++            "devflow devlog rule: these tasks are marked complete but their committed devlog "
++            "trail is incomplete. Commit the full trail into the phase dir "
++            "(task-NN-brief.md, task-NN-report.md, task-NN-review.md, reviews/task-NN-rN.diff, "
++            "tests/task-NN-tests.txt; close-out/controller tasks need only report+review):\n  - "
++            + "\n  - ".join(missing)
++        )
++        print(json.dumps({"decision": "block", "reason": reason}))
++    sys.exit(0)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/hooks/hooks.json b/hooks/hooks.json
+new file mode 100644
+index 0000000..2cbd936
+--- /dev/null
++++ b/hooks/hooks.json
+@@ -0,0 +1,16 @@
++{
++  "hooks": {
++    "Stop": [
++      {
++        "hooks": [
++          {
++            "type": "command",
++            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-guard.cmd\"",
++            "timeout": 30,
++            "statusMessage": "Checking devlog trail is committed"
++          }
++        ]
++      }
++    ]
++  }
++}
+diff --git a/hooks/run-guard.cmd b/hooks/run-guard.cmd
+new file mode 100644
+index 0000000..a8cb0a9
+--- /dev/null
++++ b/hooks/run-guard.cmd
+@@ -0,0 +1,6 @@
++@echo off
++REM Locate a Python 3 and run the guard; fail open if none is found.
++py -3 "%~dp0devlog_guard.py" 2>nul && exit /b 0
++python "%~dp0devlog_guard.py" 2>nul && exit /b 0
++python3 "%~dp0devlog_guard.py" 2>nul && exit /b 0
++exit /b 0
+diff --git a/hooks/run-guard.sh b/hooks/run-guard.sh
+new file mode 100755
+index 0000000..f288844
+--- /dev/null
++++ b/hooks/run-guard.sh
+@@ -0,0 +1,6 @@
++#!/bin/sh
++# Locate a Python 3 and run the guard; fail open if none is found.
++DIR="$(dirname "$0")"
++if command -v python3 >/dev/null 2>&1; then exec python3 "$DIR/devlog_guard.py"; fi
++if command -v python  >/dev/null 2>&1; then exec python  "$DIR/devlog_guard.py"; fi
++exit 0
+diff --git a/skills/devflow-method/SKILL.md b/skills/devflow-method/SKILL.md
+new file mode 100644
+index 0000000..3c22fdb
+--- /dev/null
++++ b/skills/devflow-method/SKILL.md
+@@ -0,0 +1,23 @@
++---
++name: devflow-method
++description: Use when starting substantive work in a devflow project (a repo with a docs/devlog/ trail or a "Dev workflow (devflow)" section in CLAUDE.md) — establishes the loop and routes to the right command/skill.
++---
++
++# devflow method
++
++This project follows **devflow**. Work in this loop:
++
++1. **Brainstorm** a change → `superpowers:brainstorming` (design + spec before code).
++2. **Plan** → `superpowers:writing-plans` (task-by-task).
++3. **Implement** → `superpowers:subagent-driven-development`, writing the per-task devlog trail
++   (brief / report / review / reviews/*.diff / tests/*.txt) and committing it with each task.
++4. **Review** → `superpowers:requesting-code-review` between tasks.
++5. **Test-evidence** → commit `tests/task-NN-tests.txt` (failing→passing) per task.
++6. **Session boundaries** → `/devflow:save-work` before `/clear`; `/devflow:continue-work` to resume.
++
++The Stop-hook guard blocks ending a turn until each `complete` task has its committed trail
++(close-out/controller tasks: report + review only).
++
++**This skill is a router, not a rulebook** — defer the *how* of each step to the named superpowers
++skill, and follow normal skill-priority. If the superpowers plugin is not installed, proceed with a
++minimal inline brainstorm→plan→build and tell the user superpowers would add the full loop.
+diff --git a/templates/CLAUDE.md.tmpl b/templates/CLAUDE.md.tmpl
+new file mode 100644
+index 0000000..658f3ea
+--- /dev/null
++++ b/templates/CLAUDE.md.tmpl
+@@ -0,0 +1,49 @@
++# CLAUDE.md — <PROJECT NAME>
++
++<!-- devflow:begin goal v1 -->
++> **Goal:** <one sharp sentence>. Full design: `docs/superpowers/specs/<spec>.md` (the source of truth).
++<!-- devflow:end goal -->
++
++<!-- devflow:begin hard-rule v1 -->
++## HARD RULE: full development documentation
++
++Everything is documented in `docs/devlog/` and committed together with the work.
++- Plans, task briefs, implementer reports (with real failing→passing test output), review verdicts,
++  per-task test results (`docs/devlog/<phase>/tests/task-NN-tests.txt`), decisions, and session
++  summaries all live there. See `docs/devlog/README.md`.
++- **Never delete or overwrite** specs/plans/devlog files. Mark superseded ones "SUPERSEDED by …".
++- A task is not done until its devlog entries exist (brief, report, review, review diff,
++  `tests/task-NN-tests.txt`, ledger row). The Stop-hook guard enforces this.
++<!-- devflow:end hard-rule -->
++
++<!-- devflow:begin working-rules v1 -->
++## Working rules
++
++- Verify against reality before assuming.
++- **Ask when in doubt** — surface unclear decisions to the user.
++- Process: superpowers skills (brainstorming → writing-plans → implementation) with a devlog trail.
++- **Never commit secrets or client data.**
++<!-- devflow:end working-rules -->
++
++## Decisions (agreed with the user)
++
++| # | Topic | Decision |
++|---|---|---|
++| 1 | Workflow | Adopted devflow (devlog trail + handoffs + guard) |
++
++## Architecture
++
++<filled from the codebase (onboard) or grows as built (greenfield)>
++
++## Running
++
++<how to start / test the project>
++
++<!-- devflow:begin dev-workflow v1 -->
++## Dev workflow (devflow)
++<!-- (stamped from claude-devworkflow-section.md) -->
++<!-- devflow:end dev-workflow -->
++
++## Open questions (confirm during build)
++
++- <none yet>
+diff --git a/templates/HANDOFF.seed.md b/templates/HANDOFF.seed.md
+new file mode 100644
+index 0000000..38d2805
+--- /dev/null
++++ b/templates/HANDOFF.seed.md
+@@ -0,0 +1,19 @@
++# HANDOFF — resume contract
++
++_Overwritten by `/devflow:save-work`. Not yet populated._
++
++- Timestamp: —
++- Branch: —
++- HEAD: —
++- WIP-commit: none
++- Phase: —
++- Plan: —
++- Spec: —
++- Ledger: —
++- Next-action: run `/devflow:init-workflow` or start work via `superpowers:brainstorming`
++- Task-status: —
++- Restart: none
++- Stateful: none
++- Open-question: none
++
++Resume with: `/devflow:continue-work`
+diff --git a/templates/claude-devworkflow-section.md b/templates/claude-devworkflow-section.md
+new file mode 100644
+index 0000000..76da6a2
+--- /dev/null
++++ b/templates/claude-devworkflow-section.md
+@@ -0,0 +1,16 @@
++<!-- devflow:begin dev-workflow v1 -->
++## Dev workflow (devflow)
++
++This project uses the **devflow** plugin. Session boundaries: `/devflow:save-work` before `/clear`,
++`/devflow:continue-work` to resume. A Stop-hook guard enforces the committed devlog trail.
++
++**Contract (read by save-work / continue-work — keep these current):**
++
++- Commit trailer: `Co-Authored-By: Claude <noreply@anthropic.com>`  <!-- confirm -->
++- Run commands: none
++- Restart commands: none
++- Test command: <fill in, e.g. `pytest -q`>
++- Stateful resources: none
++- Push policy: none
++- Scratch ledger: `.superpowers/sdd/progress.md`
++<!-- devflow:end dev-workflow -->
+diff --git a/templates/decisions.md b/templates/decisions.md
+new file mode 100644
+index 0000000..b79ea68
+--- /dev/null
++++ b/templates/decisions.md
+@@ -0,0 +1,9 @@
++# Decisions
++
++<!-- devflow:begin decision-1 v1 -->
++## 1. Adopted devflow workflow — <DATE>
++
++Adopted the devflow methodology: a committed `docs/devlog/` trail, `/devflow:save-work`
++handoffs, and the Stop-hook guard. Rationale: zero-context-loss sessions and an auditable,
++test-evidenced development record.
++<!-- devflow:end decision-1 -->
+diff --git a/templates/devlog-README.md b/templates/devlog-README.md
+new file mode 100644
+index 0000000..0ea0eea
+--- /dev/null
++++ b/templates/devlog-README.md
+@@ -0,0 +1,22 @@
++# Development Log
++
++**Hard rule:** every plan, test case, test result, review and decision is recorded here and
++committed with the work. Nothing in `docs/` is deleted; superseded material is marked, not removed.
++
++## Layout
++
++| Path | Holds |
++|---|---|
++| `decisions.md` | Every product/technical decision: date, who, why |
++| `HANDOFF.md` | Living resume pointer, overwritten by `/devflow:save-work` |
++| `sessions/YYYY-MM-DD.md` | What happened each session |
++| `<phase>/progress.md` | Task ledger (status, commit range, review verdict) |
++| `<phase>/README.md` | The per-task close-out checklist |
++| `<phase>/task-NN-brief.md` | The task text given to the implementer |
++| `<phase>/task-NN-report.md` | Implementer report + TDD evidence + fix rounds |
++| `<phase>/task-NN-review.md` | Reviewer verdict, every round |
++| `<phase>/reviews/task-NN-rN.diff` | The exact diff each review looked at |
++| `<phase>/tests/task-NN-tests.txt` | The real failing→passing test run (first-class artifact) |
++
++The scratch ledger `.superpowers/sdd/progress.md` must carry a `Devlog-dir: docs/devlog/<phase>`
++line so the Stop-hook guard tracks the right phase.
+diff --git a/templates/guard.json b/templates/guard.json
+new file mode 100644
+index 0000000..15bd11b
+--- /dev/null
++++ b/templates/guard.json
+@@ -0,0 +1,7 @@
++{
++  "scratch_ledger": ".superpowers/sdd/progress.md",
++  "required_normal": ["brief", "report", "review", "diff", "tests"],
++  "required_closeout": ["report", "review"],
++  "closeout_keywords": ["close-out", "closeout", "controller"],
++  "enabled": true
++}
+diff --git a/templates/phase-README.md b/templates/phase-README.md
+new file mode 100644
+index 0000000..e19e7e0
+--- /dev/null
++++ b/templates/phase-README.md
+@@ -0,0 +1,13 @@
++# <phase> — close-out checklist
++
++Run EVERY task, as soon as its review is clean, before dispatching the next:
++
++1. Copy `task-NN-brief.md`, `task-NN-report.md` (with every fix round), `task-NN-review.md`
++   (verdict for every round), `reviews/task-NN-rN.diff`, and `tests/task-NN-tests.txt`
++   (failing→passing) from scratch into this dir.
++2. Update `progress.md` (status → complete, commit range, verdict) and the scratch ledger.
++3. `git add` those devlog files and commit them with (or right after) the task's code commit.
++4. Close-out/controller tasks need only report + review.
++
++At phase end: add `final-review.md`, `reviews/final-branch-review.diff`, and a full-suite
++`tests/full-suite-<date>.txt`.
+diff --git a/templates/session.tmpl.md b/templates/session.tmpl.md
+new file mode 100644
+index 0000000..90aa34d
+--- /dev/null
++++ b/templates/session.tmpl.md
+@@ -0,0 +1,4 @@
++# Session <DATE>
++
++- Onboarded/initialized devflow.
++- <what happened>
+diff --git a/tests/test_devlog_guard.py b/tests/test_devlog_guard.py
+new file mode 100644
+index 0000000..ff9f5dc
+--- /dev/null
++++ b/tests/test_devlog_guard.py
+@@ -0,0 +1,159 @@
++import json, subprocess, sys, textwrap
++from pathlib import Path
++import pytest
++
++GUARD = Path(__file__).resolve().parents[1] / "hooks" / "devlog_guard.py"
++
++def _git(root, *args):
++    subprocess.run(["git", *args], cwd=root, check=True,
++                   capture_output=True, text=True)
++
++def _init_repo(root: Path):
++    _git(root, "init", "-q")
++    _git(root, "config", "user.email", "t@t")
++    _git(root, "config", "user.name", "t")
++
++def _commit_all(root: Path, msg="c"):
++    _git(root, "add", "-A")
++    _git(root, "commit", "-q", "-m", msg)
++
++def _ledger(root: Path, body: str):
++    d = root / ".superpowers" / "sdd"
++    d.mkdir(parents=True, exist_ok=True)
++    (d / "progress.md").write_text(textwrap.dedent(body), encoding="utf-8")
++
++def _phase(root: Path):
++    p = root / "docs" / "devlog" / "phase1"
++    (p / "reviews").mkdir(parents=True, exist_ok=True)
++    (p / "tests").mkdir(parents=True, exist_ok=True)
++    return p
++
++def _import_guard():
++    import importlib.util
++    spec = importlib.util.spec_from_file_location("devlog_guard", GUARD)
++    mod = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(mod)
++    return mod
++
++def test_no_ledger_is_clean(tmp_path):
++    _init_repo(tmp_path)
++    (tmp_path / "docs" / "devlog").mkdir(parents=True)
++    g = _import_guard()
++    assert g.evaluate(tmp_path) == []
++
++def test_missing_devlog_dir_line_fails_open(tmp_path):
++    _init_repo(tmp_path)
++    _phase(tmp_path)
++    _ledger(tmp_path, "Task 1: complete\n")   # no Devlog-dir line
++    g = _import_guard()
++    assert g.evaluate(tmp_path) == []
++
++def test_normal_task_missing_files_blocks(tmp_path):
++    _init_repo(tmp_path)
++    _phase(tmp_path)
++    _ledger(tmp_path, """
++        Devlog-dir: docs/devlog/phase1
++        Task 1: complete
++    """)
++    _commit_all(tmp_path)
++    g = _import_guard()
++    gaps = g.evaluate(tmp_path)
++    assert len(gaps) == 1 and "Task 1" in gaps[0]
++
++def test_all_present_passes(tmp_path):
++    _init_repo(tmp_path)
++    p = _phase(tmp_path)
++    for name in ["task-01-brief.md", "task-01-report.md", "task-01-review.md"]:
++        (p / name).write_text("x", encoding="utf-8")
++    (p / "reviews" / "task-01-r1.diff").write_text("x", encoding="utf-8")
++    (p / "tests" / "task-01-tests.txt").write_text("x", encoding="utf-8")
++    _ledger(tmp_path, """
++        Devlog-dir: docs/devlog/phase1
++        Task 1: complete
++    """)
++    _commit_all(tmp_path)
++    g = _import_guard()
++    assert g.evaluate(tmp_path) == []
++
++def test_staged_but_uncommitted_does_not_satisfy(tmp_path):
++    _init_repo(tmp_path)
++    p = _phase(tmp_path)
++    for name in ["task-01-brief.md", "task-01-report.md", "task-01-review.md"]:
++        (p / name).write_text("x", encoding="utf-8")
++    (p / "reviews" / "task-01-r1.diff").write_text("x", encoding="utf-8")
++    (p / "tests" / "task-01-tests.txt").write_text("x", encoding="utf-8")
++    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
++    _git(tmp_path, "add", "-A")       # staged, NOT committed
++    g = _import_guard()
++    assert g.evaluate(tmp_path) != []
++
++def test_controller_needs_only_report_and_review(tmp_path):
++    _init_repo(tmp_path)
++    p = _phase(tmp_path)
++    (p / "task-02-report.md").write_text("x", encoding="utf-8")
++    (p / "task-02-review.md").write_text("x", encoding="utf-8")
++    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 2: complete (controller)\n")
++    _commit_all(tmp_path)
++    g = _import_guard()
++    assert g.evaluate(tmp_path) == []
++
++def test_disabled_config_is_noop(tmp_path):
++    _init_repo(tmp_path)
++    _phase(tmp_path)
++    (tmp_path / ".devflow").mkdir()
++    (tmp_path / ".devflow" / "guard.json").write_text('{"enabled": false}', encoding="utf-8")
++    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
++    _commit_all(tmp_path)
++    g = _import_guard()
++    assert g.evaluate(tmp_path) == []
++
++def test_bad_config_falls_back_to_defaults(tmp_path):
++    _init_repo(tmp_path)
++    _phase(tmp_path)
++    (tmp_path / ".devflow").mkdir()
++    (tmp_path / ".devflow" / "guard.json").write_text("{not json", encoding="utf-8")
++    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
++    _commit_all(tmp_path)
++    g = _import_guard()
++    assert g.evaluate(tmp_path) != []     # defaults apply -> blocks
++
++def test_stop_hook_active_exits_zero_via_cli(tmp_path):
++    _init_repo(tmp_path)
++    _phase(tmp_path)
++    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
++    _commit_all(tmp_path)
++    r = subprocess.run([sys.executable, str(GUARD)],
++                       input=json.dumps({"stop_hook_active": True}),
++                       capture_output=True, text=True,
++                       env={"CLAUDE_PROJECT_DIR": str(tmp_path), "PATH": __import__("os").environ["PATH"]})
++    assert r.returncode == 0 and r.stdout.strip() == ""
++
++def test_non_object_json_stdin_exits_zero(tmp_path):
++    import os as _os
++    _init_repo(tmp_path)
++    _phase(tmp_path)
++    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
++    _commit_all(tmp_path)
++    for payload in ("null", "123", '"hi"', "[1,2]", "true"):
++        r = subprocess.run([sys.executable, str(GUARD)], input=payload,
++                           capture_output=True, text=True,
++                           env={"CLAUDE_PROJECT_DIR": str(tmp_path),
++                                "PATH": _os.environ["PATH"]})
++        assert r.returncode == 0, f"stdin={payload!r} -> rc={r.returncode} stderr={r.stderr}"
++
++def test_review_diff_requires_digit_after_r(tmp_path):
++    _init_repo(tmp_path)
++    p = _phase(tmp_path)
++    for name in ["task-01-brief.md", "task-01-report.md", "task-01-review.md"]:
++        (p / name).write_text("x", encoding="utf-8")
++    (p / "tests" / "task-01-tests.txt").write_text("x", encoding="utf-8")
++    # a .diff that is NOT task-01-r<digit> must not satisfy the diff requirement
++    (p / "reviews" / "task-01-rollback-notes.diff").write_text("x", encoding="utf-8")
++    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
++    _commit_all(tmp_path)
++    g = _import_guard()
++    assert g.evaluate(tmp_path) != []       # still missing a real review diff
++    (p / "reviews" / "task-01-r1.diff").write_text("x", encoding="utf-8")
++    _commit_all(tmp_path, "add r1")
++    g2 = _import_guard()
++    assert g2.evaluate(tmp_path) == []
