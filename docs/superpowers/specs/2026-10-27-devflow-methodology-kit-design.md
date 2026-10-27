@@ -99,7 +99,7 @@ a marketplace and install `devflow` from it. Install path documented in the READ
 /plugin install devflow@devflow-kit
 ```
 
-## 2.3 What `/devflow:save-work` guarantees — the stale-data sweep
+### 2.3 What `/devflow:save-work` guarantees — the stale-data sweep
 
 `save-work` is a faithful port of HMD's `/save_work`, preserving its hard rule verbatim:
 
@@ -209,6 +209,26 @@ per run (absent or unparseable → defaults, never an error):
 This makes the guard robust to projects that want a lighter trail (e.g. `report`+`review` only) or a
 different ledger location, without forking the plugin. `enabled:false` is the clean per-project
 off-switch (distinct from the global fail-open, which triggers only when the structure is absent).
+Config is **data only** — the guard never evaluates or executes anything from `guard.json`; unknown
+keys are ignored; values are type- and size-checked (lists of short strings, one small boolean/path).
+
+### 3.2 Guard implementation notes (performance & debuggability)
+
+- **Stay inside the 30 s timeout — batch, don't loop subprocesses.** The guard makes exactly
+  **two** git calls total, not 2–5 per task: one `git ls-files -- <phase_dir>` (everything git
+  tracks under the phase dir) and one `git ls-tree -r --name-only HEAD -- <phase_dir>` (everything
+  committed in HEAD under it). Both results are read into Python sets; every per-task file check is
+  then a set membership test. A task's file must appear in the **committed** set (HEAD), which
+  subsumes the "committed, not merely staged" rule in one pass. Cost is O(1) git calls regardless of
+  task count, so a 40-task phase is as fast as a 1-task phase.
+- **Fail-open diagnostics.** On any unexpected exception the guard still exits 0, but when
+  `DEVFLOW_GUARD_DEBUG=1` it appends a one-line reason (timestamp + exception) to
+  `<root>/.devflow/guard.log`, so a "why didn't the guard fire?" question is answerable. With the
+  env var unset it is completely silent — no file writes, no stderr noise.
+- **Determinism.** Ledger parsing is a single pass of documented regexes (§11); task numbers are
+  normalized to `NN`; duplicate `Task N` lines resolve to "complete if any line says complete".
+- **Read-only.** The guard never writes to the repo (except the opt-in debug log under `.devflow/`,
+  which `init-workflow` adds to `.gitignore`).
 
 ## 4. `/devflow:init-workflow` — two-mode onboarding
 
@@ -397,7 +417,104 @@ is safe to run concurrently. The HANDOFF is single-writer by nature (one save-wo
 no absolute or user-name-specific paths are written into any stamped file, so a bootstrapped repo is
 portable across machines and users.
 
-## 11. Open questions (confirm during build)
+## 11. Component data contracts (the grammars the parts rely on)
+
+The pieces are decoupled, so the **text formats they share are the real interface** and must be
+specified exactly. All consumers tolerate extra whitespace and are case-insensitive on keywords.
+
+### 11.1 SDD ledger (`.superpowers/sdd/progress.md`) — read by the guard, written by the loop
+- **Phase pointer** (required for the guard to act): a line `Devlog-dir: <path>` where `<path>` is
+  the committed phase dir, repo-root-relative (e.g. `docs/devlog/phase1`). Absent → guard fails open.
+- **Task status**: one line per task matching `^Task\s+(?P<n>\d+)\s*:\s*(?P<status>\w[\w-]*)\b.*$`.
+  The guard acts only on `status == "complete"`. A `close-out`/`closeout`/`controller` substring
+  anywhere on a complete line marks it exempt (report+review only).
+- The guard reads **only** these two shapes; any other ledger prose is ignored.
+
+### 11.2 Managed marker blocks — written by `init-workflow`, re-found on refresh
+```
+<!-- devflow:begin <section-id> v<N> -->
+… generated content …
+<!-- devflow:end <section-id> -->
+```
+`<section-id>` is stable (e.g. `dev-workflow`, `hard-rule`); `v<N>` lets refresh-mode detect an
+out-of-date section and offer to upgrade it. Refresh replaces only the bytes between a matching
+begin/end pair; content outside any pair is never touched.
+
+### 11.3 `HANDOFF.md` schema — written by save-work, read by continue-work
+A fixed set of labelled fields so continue-work parses it unambiguously: `Timestamp`, `Branch`,
+`HEAD`, `WIP-commit` (hash or `none`), `Phase`, `Plan`, `Spec`, `Ledger`, `Next-action` (one
+concrete executable step), `Task-status`, `Restart` (list of exact commands or `none`),
+`Stateful` (e.g. migration revision or `none`), `Open-question` (or `none`), and the footer
+`Resume with: /devflow:continue-work`.
+
+### 11.4 Dev-workflow contract block — written by init, read by save/continue
+The §5.1 table, rendered inside a `devflow:begin dev-workflow` marker as a simple
+`Key: value` list so both humans and the commands read it the same way.
+
+## 12. Dependencies, assumptions & graceful fallback
+
+- **git** — required for the guard's committed check and for save/continue. No git → guard no-ops;
+  save-work still writes HANDOFF and says commits were skipped (§10).
+- **Python 3** — required only by the guard; located by the launchers; absent → guard no-ops.
+- **superpowers plugin** — devflow *orchestrates* it. `devflow-method` and the greenfield flow call
+  `superpowers:brainstorming` / `writing-plans` / `subagent-driven-development`. **If superpowers is
+  not installed**, devflow must not hard-fail: the skill/commands detect its absence, say so, point
+  the user at installing it, and fall back to a minimal inline brainstorm→plan→build outline so work
+  can still proceed. devflow never silently assumes superpowers is present.
+- **Claude Code harness** — the instruction file is `CLAUDE.md`. If a repo uses a different
+  convention file as well, init-workflow writes `CLAUDE.md` (the authoritative one here) and notes
+  the other rather than editing it.
+- No network and no non-stdlib Python packages are ever required by any component.
+
+## 13. Failure-mode table (detection → response)
+
+| # | Failure | Detection | Response |
+|---|---|---|---|
+| 1 | No Python on PATH | launcher finds none | guard exits 0 (no-op); session not blocked |
+| 2 | Not a git repo | `git rev-parse` fails | guard no-ops; save-work writes HANDOFF, skips commit, says so |
+| 3 | No/unreachable remote | `git remote` empty / push fails | save-work notes "not pushed"; never errors |
+| 4 | Detached HEAD / mid-merge | `git symbolic-ref` / state files | save-work stops with a clear message before committing |
+| 5 | Would-be secret staged | `.env`/key/entropy scan | save-work pauses and asks before `git add` |
+| 6 | Missing/stale HANDOFF | absent or timestamp ≪ latest commit | continue-work asks the user; never guesses |
+| 7 | Restart command fails | non-zero exit | continue-work reports the failing command; continues with the rest |
+| 8 | Reality ≠ handoff | named test/commit check | continue-work stops and surfaces the specific mismatch |
+| 9 | Guard bug / exception | caught at top level | exit 0 (fail open); optional one-line debug log |
+| 10 | Huge phase / many tasks | n/a | two batched git calls keep it well under the 30 s timeout |
+| 11 | superpowers absent | skill lookup | report + fallback outline; no hard-fail |
+| 12 | Re-run init-workflow | existing markers | refresh-mode: update managed sections only, create missing |
+| 13 | Corrupt/odd `guard.json` | parse/type check | ignore → built-in defaults; never error |
+
+## 14. Append / idempotency semantics for logs
+
+- `docs/devlog/decisions.md` is **append-only**; init seeds "decision 1: adopted devflow" exactly
+  once (guarded by a marker), and re-runs never duplicate it.
+- `docs/devlog/sessions/<today>.md` is **append** — a re-run or a later save-work on the same day
+  adds a dated entry rather than overwriting the file.
+- `docs/devlog/HANDOFF.md` is the one **overwrite** file (a living pointer); its prior content is
+  not history — the session file carries the narrative.
+
+## 15. Clean removal / uninstall
+
+- `/plugin uninstall devflow` removes the commands/guard/skill globally; a repo's committed
+  `docs/devlog/` + CLAUDE.md remain (they are the project's own record) and keep working as plain docs.
+- To detach a single repo without uninstalling the plugin: set `guard.json` `enabled:false` (keeps
+  the trail, silences the guard) — a documented, reversible off-switch. No marker-section is force-
+  removed automatically; the user deletes them if they want, and the markers make that unambiguous.
+
+## 16. Definition of Done (acceptance criteria)
+
+The kit is "done" when, on the target Windows box:
+1. The plugin installs from the local marketplace and all five commands + the skill are listed.
+2. `devlog_guard.py` passes its full pytest (§9) including every §13 edge case.
+3. The guard **blocks** a contrived incomplete-trail repo with the exact file list, then **passes**
+   once the trail is committed — and **never** fires in a repo without `docs/devlog/`.
+4. `init-workflow` produces a correct scaffold in both a new empty dir and a small existing repo,
+   **non-destructively and idempotently** (a second run changes nothing it shouldn't).
+5. A save-work → `/clear` → continue-work round-trip resumes with zero loss and a clean tree.
+6. devflow-kit **dogfoods itself**: its own repo carries a `docs/devlog/` trail produced by this
+   very workflow.
+
+## 17. Open questions (confirm during build)
 
 - Exact plugin + command names final? (`devflow`, `/devflow:save-work`, …)
 - Should `document-feature` / `demo-guide` be included from the start, or deferred until after the
