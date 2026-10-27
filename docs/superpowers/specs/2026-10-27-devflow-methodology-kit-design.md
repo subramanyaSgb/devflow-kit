@@ -1,6 +1,6 @@
 # devflow — Portable Development-Methodology Kit
 
-**Status:** DRAFT (awaiting user review)
+**Status:** FINAL — all open questions resolved (§17); approved to proceed to the implementation plan (2026-10-27)
 **Date:** 2026-10-27
 **Author:** Kiran Hegde / Subramanya (Deevia) with Claude
 
@@ -514,11 +514,18 @@ The kit is "done" when, on the target Windows box:
 6. devflow-kit **dogfoods itself**: its own repo carries a `docs/devlog/` trail produced by this
    very workflow.
 
-## 17. Open questions (confirm during build)
+## 17. Resolved decisions (were open questions)
 
-- Exact plugin + command names final? (`devflow`, `/devflow:save-work`, …)
-- Should `document-feature` / `demo-guide` be included from the start, or deferred until after the
-  core loop is proven? (Spec includes them; easy to defer in the plan.)
-- Memory seeding: acceptable as best-effort-and-skip, or must it be guaranteed?
-- Default commit-trailer attribution when the user gives none at init time (follow the session's
-  attribution, or leave a clearly-marked placeholder)?
+All settled 2026-10-27; no open questions remain.
+
+1. **Names are final.** Plugin `devflow`; commands `/devflow:save-work`, `/devflow:continue-work`,
+   `/devflow:init-workflow`, `/devflow:document-feature`, `/devflow:demo-guide`; local marketplace
+   `devflow-kit`.
+2. **`document-feature` + `demo-guide` ship in the first version** (not deferred).
+3. **Memory seeding is best-effort-and-skip.** `CLAUDE.md` + `docs/devlog/` are the guaranteed source
+   of truth; a memory seed is an enhancement written only if the harness memory dir is writable, and
+   its absence never fails a command or degrades the workflow.
+4. **Default commit trailer:** `init-workflow` asks for the attribution line. If the user skips, it
+   falls back to the current session's attribution line and records it in the editable
+   `dev-workflow` contract block (marked "confirm") — never left blank, never silently wrong.
+   The contract block's `Commit trailer` is authoritative thereafter; save-work reads it.
