@@ -3,6 +3,7 @@
 **A portable Claude Code plugin that makes any project resumable, documented, and review-disciplined — and ends context loss between sessions.**
 
 <p>
+  <a href="https://github.com/subramanyaSgb/devflow-kit/actions/workflows/test.yml"><img alt="tests" src="https://github.com/subramanyaSgb/devflow-kit/actions/workflows/test.yml/badge.svg"></a>
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg">
   <img alt="Platform: Windows / macOS / Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue">
   <img alt="Runtime: Python 3 stdlib only" src="https://img.shields.io/badge/runtime-Python%203%20(stdlib%20only)-blue">
@@ -13,6 +14,32 @@
 Install one plugin, run one command, and every project you open follows the same disciplined loop:
 **zero-loss session handoffs, a committed `docs/devlog/` trail, a Stop-hook guard that enforces it, and
 a one-command bootstrap** — without hand-copying files between repos.
+
+<!--
+  📹 Add a demo GIF here for maximum impact. Record a real save-work → /clear → continue-work
+  round-trip (any screen-to-GIF tool), commit it to docs/media/demo.gif, and uncomment:
+
+![devflow save → clear → continue demo](docs/media/demo.gif)
+-->
+
+---
+
+## Contents
+
+- [The problem devflow solves](#the-problem-devflow-solves)
+- [How devflow fixes it](#how-devflow-fixes-it)
+- [What you get](#what-you-get)
+- [Install](#install)
+- [Quickstart — your first session](#quickstart--your-first-session)
+- [Commands](#commands)
+- [What a handoff looks like](#what-a-handoff-looks-like)
+- [How it works — the loop](#how-it-works--the-loop)
+- [The Stop-hook guard](#the-stop-hook-guard)
+- [Requirements & platform](#requirements--platform)
+- [FAQ](#faq)
+- [Uninstall](#uninstall)
+- [Contributing & roadmap](#contributing--roadmap)
+- [Design & license](#design--license)
 
 ---
 
@@ -124,6 +151,32 @@ That's it — works on any machine with Claude Code, no auth needed (public repo
 
 ---
 
+## Quickstart — your first session
+
+```
+# 1. In the repo you want to adopt the workflow (new or existing):
+/devflow:init-workflow
+#    → reads the code (if any), asks what it can't infer, and writes a grounded
+#      CLAUDE.md + docs/devlog/ scaffold. Safe to re-run; never clobbers your edits.
+
+# 2. Do your work — brainstorm, plan, implement. The devlog trail and guard are now live.
+
+# 3. When you pause, hit a natural boundary, or the context is getting heavy:
+/devflow:save-work
+#    → sweeps every living doc for stale facts, writes HANDOFF.md, commits.
+
+/clear
+#    → reclaim the full context window; nothing is lost — it's on disk and in git.
+
+# 4. Next session, pick up exactly where you stopped:
+/devflow:continue-work
+```
+
+That loop — **work → save → clear → continue** — is the whole discipline. Everything else
+(the guard, the docs commands) supports it.
+
+---
+
 ## Commands
 
 | Command | What it does |
@@ -133,6 +186,38 @@ That's it — works on any machine with Claude Code, no auth needed (public repo
 | `/devflow:continue-work` | Resume exactly where the last session stopped, verified against git state |
 | `/devflow:document-feature <name>` | Write a code-grounded guidebook for a feature / module / surface |
 | `/devflow:demo-guide <name>` | Write a client-facing walkthrough of a feature (docs only, never touches app code) |
+
+---
+
+## What a handoff looks like
+
+This is what replaces the lossy auto-summary — a fixed-schema contract `save-work` commits to
+`docs/devlog/HANDOFF.md`. `continue-work` parses it field by field, so resuming is unambiguous:
+
+```markdown
+# HANDOFF
+
+Timestamp:    2026-10-27T14:41:00Z
+Branch:       main
+HEAD:         14a332e
+WIP-commit:   none
+Phase:        docs/devlog/plugin-build
+Plan:         docs/superpowers/plans/2026-10-27-devflow-methodology-kit.md
+Spec:         docs/superpowers/specs/2026-10-27-devflow-methodology-kit-design.md
+Ledger:       .superpowers/sdd/progress.md
+
+Next-action:  Add FAQ + quickstart sections to README.md, then re-run the guard pytest.
+Task-status:  Task 7 complete; Task 8 (README polish) in progress.
+Restart:      none
+Stateful:     none
+Open-question: none
+
+Resume with: /devflow:continue-work
+```
+
+Every field is concrete: a branch and commit to verify against, one executable next action, the
+exact commands to restart any background process, and any stateful revision (e.g. a DB migration)
+to confirm. Nothing is inferred.
 
 ---
 
@@ -190,6 +275,53 @@ pointing at it.
 
 ---
 
+## FAQ
+
+<details><summary><b>Why not just use <code>/compact</code> or let the window auto-summarize?</b></summary>
+
+Both produce a lossy prose summary that lives only in that one session and can silently drop or
+blur the exact detail you needed next. devflow writes a **structured, verifiable, committed**
+contract instead — then lets you `/clear` on purpose. See the
+[comparison table](#compaction-vs-devflow-side-by-side) above. Use `/compact` for a quick
+mid-thought trim; use devflow for a real session boundary you'll resume from later.
+</details>
+
+<details><summary><b>Will the guard interfere with my other repos?</b></summary>
+
+No. The guard activates **only** in a repo that has both `docs/devlog/` and an SDD ledger with a
+`Devlog-dir:` line. Everywhere else — and on any missing Python, non-git dir, or internal error —
+it exits 0 as a silent no-op. It fails open by design: a bug in the guard can never block your
+session.
+</details>
+
+<details><summary><b>Do I have to use the superpowers plugin?</b></summary>
+
+It's recommended — devflow orchestrates its brainstorm → plan → implement → review loop. But if it
+isn't installed, devflow doesn't hard-fail: it falls back to a minimal inline brainstorm → plan →
+build and tells you what the full loop would add.
+</details>
+
+<details><summary><b>What data leaves my machine?</b></summary>
+
+None. devflow is local files, markdown commands, and a pure-stdlib Python guard that only shells out
+to `git`. There is no network call, no telemetry, and no third-party dependency anywhere in it.
+</details>
+
+<details><summary><b>Is it safe to re-run <code>init-workflow</code>?</b></summary>
+
+Yes. It's idempotent: on a repo that already has devflow it switches to refresh-mode, updates only
+its own marker-delimited sections, and never touches your own prose or files. It doubles as a health
+check.
+</details>
+
+<details><summary><b>What happens to my devlog if I uninstall the plugin?</b></summary>
+
+It stays. `docs/devlog/` and `CLAUDE.md` are the project's own committed record and keep working as
+plain docs. Only the commands, guard, and skill (which live in the plugin) go away.
+</details>
+
+---
+
 ## Uninstall
 
 ```
@@ -202,10 +334,33 @@ uninstalling, set `enabled: false` in its `.devflow/guard.json`.
 
 ---
 
+## Contributing & roadmap
+
+Issues and pull requests are welcome at
+[github.com/subramanyaSgb/devflow-kit](https://github.com/subramanyaSgb/devflow-kit). The guard is
+the one unit-testable component — run its suite before sending a change:
+
+```
+python -m pip install pytest
+python -m pytest tests/ -v
+```
+
+CI runs the same suite on Python 3.9 / 3.11 / 3.13 for every push and PR.
+
+**Current:** `v0.1.0` — the full save / continue / guard / bootstrap loop, Windows-first with a POSIX
+launcher included.
+
+**On the radar:**
+- First-class macOS / Linux wiring (a second `Stop` entry shipped by default).
+- Publishing to a public plugin marketplace.
+- A recorded demo GIF in the README header.
+
+---
+
 ## Design & license
 
 The full design — data contracts, failure-mode table, and acceptance criteria — lives in
 [`docs/superpowers/specs/2026-10-27-devflow-methodology-kit-design.md`](docs/superpowers/specs/2026-10-27-devflow-methodology-kit-design.md).
 devflow **dogfoods itself**: this repo carries a `docs/devlog/` trail produced by this very workflow.
 
-Released under the **MIT License** (see `license` in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)).
+Released under the [MIT License](LICENSE).
