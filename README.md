@@ -4,12 +4,23 @@ A portable Claude Code plugin that gives any project the HMD development workflo
 save/continue session handoffs, a committed `docs/devlog/` trail, a fail-open Stop-hook
 guard that enforces it, and a one-command project bootstrap.
 
-## Install (local)
+## Install (any PC)
 
 ```
-/plugin marketplace add ~/Desktop/devflow-kit
+/plugin marketplace add subramanyaSgb/devflow-kit
 /plugin install devflow@devflow-kit
 ```
+
+That's it — works on any machine with Claude Code, no auth needed (public repo). To update later:
+`/plugin marketplace update devflow-kit`.
+
+<details><summary>Install from a local clone instead</summary>
+
+```
+/plugin marketplace add /path/to/devflow-kit
+/plugin install devflow@devflow-kit
+```
+</details>
 
 ## Commands
 
