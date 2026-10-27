@@ -59,6 +59,8 @@ devflow-kit/
 │  └─ demo-guide.md            # client-facing walkthrough of a feature
 ├─ hooks/
 │  ├─ hooks.json               # wires the Stop hook via ${CLAUDE_PLUGIN_ROOT}
+│  ├─ run-guard.cmd            # Windows launcher: finds a Python, runs the guard
+│  ├─ run-guard.sh             # POSIX launcher: finds a Python, runs the guard
 │  └─ devlog_guard.py          # project-agnostic; reads $CLAUDE_PROJECT_DIR; fails open
 ├─ skills/
 │  └─ devflow-method/
@@ -70,9 +72,16 @@ devflow-kit/
 │  ├─ phase-README.md          # the per-task close-out checklist (per phase)
 │  ├─ decisions.md             # seeded with decision 1: "adopted devflow"
 │  ├─ HANDOFF.seed.md          # placeholder resume contract
+│  ├─ guard.json               # OPTIONAL per-project guard config (defaults baked in; §3.1)
 │  └─ session.tmpl.md          # docs/devlog/sessions/YYYY-MM-DD.md starter
+├─ tests/
+│  └─ test_devlog_guard.py     # pytest for the guard (the one unit-testable component)
 └─ README.md                   # what the plugin is, how to install, what each command does
 ```
+
+All files `init-workflow` stamps into a project are wrapped in idempotency markers
+(`<!-- devflow:begin <id> -->` … `<!-- devflow:end <id> -->`) so a re-run can refresh a managed
+section in place without clobbering the user's own edits around it (§4.2).
 
 Commands are invoked namespaced: `/devflow:save-work`, `/devflow:continue-work`,
 `/devflow:init-workflow`, `/devflow:document-feature`, `/devflow:demo-guide`.
@@ -155,46 +164,86 @@ everything else and says so rather than failing.
 - **Fails open (exit 0) on every unexpected error** — a bug in the guard can never wedge a session.
 - Respects `stop_hook_active` so it never loops.
 
-`hooks.json` wires it as a `Stop` hook. Invocation must be Windows-first (the primary environment)
-and also work on POSIX:
+**Cross-platform launch (robustness).** The hook does not call `python` directly — a bare `python`
+is absent or is Python 2 on many machines. Instead `hooks.json` calls a thin platform launcher that
+locates a working Python 3 and execs the guard:
 
 ```json
 { "hooks": { "Stop": [ { "hooks": [ {
   "type": "command",
-  "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/devlog_guard.py\"",
+  "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-guard.cmd\"",
   "timeout": 30,
   "statusMessage": "Checking devlog trail is committed"
 } ] } ] } }
 ```
 
-The guard is pure Python standard library (no third-party imports), so `python` on PATH is the only
-requirement. If a project uses `py`/`python3`, that is a documented README note; the default assumes
-`python` (true on the target Windows box). The guard shells out to `git ls-files` to test tracking,
-exactly as HMD's does.
+- `run-guard.cmd` (Windows) tries, in order, `py -3`, `python`, `python3`; the first that resolves
+  runs `devlog_guard.py`. If none resolves, it exits 0 (fail open — never block over a missing
+  interpreter).
+- `run-guard.sh` (POSIX) does the same with `python3` then `python`. A companion POSIX entry can be
+  added to `hooks.json` for mac/Linux users; on the target Windows box only the `.cmd` is needed.
+- The guard itself is **pure Python standard library** (no third-party imports) so no environment
+  setup is ever required.
+
+**Committed, not merely staged.** The guard tests a file with `git ls-files --error-unmatch`
+(tracked) *and* `git log -1 --format=%H -- <path>` returns non-empty (it exists in history). A file
+that is only `git add`-ed but never committed therefore does **not** satisfy the trail — matching the
+rule's intent that the trail is *committed* with the work. Any git error → fail open.
+
+### 3.1 Optional per-project guard config
+
+Zero config is required — the defaults below are baked into the script and match HMD exactly. A
+project that works differently may drop a `.devflow/guard.json` in its root to override, read once
+per run (absent or unparseable → defaults, never an error):
+
+```jsonc
+{
+  "scratch_ledger": ".superpowers/sdd/progress.md",   // where "Task N: complete" lines live
+  "required_normal":  ["brief", "report", "review", "diff", "tests"],
+  "required_closeout": ["report", "review"],
+  "closeout_keywords": ["close-out", "closeout", "controller"],
+  "enabled": true                                      // false → guard is a no-op for this repo
+}
+```
+
+This makes the guard robust to projects that want a lighter trail (e.g. `report`+`review` only) or a
+different ledger location, without forking the plugin. `enabled:false` is the clean per-project
+off-switch (distinct from the global fail-open, which triggers only when the structure is absent).
 
 ## 4. `/devflow:init-workflow` — two-mode onboarding
 
 A Claude-driven command (markdown instructions). On run:
 
+0. **Fix the project root.** Resolve the target root as the nearest enclosing git repo
+   (`git rev-parse --show-toplevel`), or the current dir if none. In a monorepo, confirm whether the
+   user means the repo root or a sub-package, and scaffold at the chosen root. Never write outside it.
 1. **Detect & confirm mode.** Heuristic: source files / a populated git history / a package
    manifest (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, …) ⇒ likely **existing**;
    otherwise **new**. Always *confirm* with the user rather than assume.
-2. **Idempotency first.** If devflow is already initialized here (a "Dev workflow (devflow)" section
-   in CLAUDE.md or a `docs/devlog/README.md` exists), report what is present and only fill gaps —
-   never overwrite.
+2. **Idempotency first.** If devflow is already initialized here (a `devflow:*` marker in CLAUDE.md
+   or a `docs/devlog/README.md` exists), switch to **refresh mode**: report what is present, offer to
+   update managed marker-sections in place, and only create what is missing. Never overwrite a user's
+   own content. `init-workflow` is therefore safe to re-run and doubles as a health check.
+3. **Pre-flight & dry-run.** List every path it will create or touch and show it to the user before
+   writing anything. If `git` is dirty with unrelated changes, note it; writes go to new files, so no
+   existing work is at risk.
 
 ### 4.1 Existing project → "onboard"
 
 1. **Frame** — ask what the project is and what kind (1–2 questions).
-2. **Read the code** — explore structure, languages/frameworks, entry points, run story, test
-   story, key modules, external integrations, obvious landmines. Use the `Explore` agent for broad
-   fan-out and read manifests/config directly. Summarize findings back to the user.
+2. **Read the code (bounded).** Explore structure, languages/frameworks, entry points, run story,
+   test story, key modules, external integrations, obvious landmines. Use the `Explore` agent for
+   broad fan-out and read manifests/config/CI directly. **Bounded:** read breadth-first and sample —
+   manifests, configs, entry points, READMEs, CI files, directory shape — not every source file;
+   on a large repo, summarize per top-level area rather than exhaustively. Present findings back to
+   the user for correction before writing anything (the user is the authority on intent, not the
+   code alone).
 3. **Clarify, one question at a time** — only what the code cannot answer: domain vocabulary,
    exact run/test commands, deploy story, conventions, known gotchas, the commit-trailer attribution.
-4. **Generate the grounded trail:**
+4. **Generate the grounded trail** (each managed section wrapped in `devflow:*` markers):
    - A rich **CLAUDE.md** in the HMD pattern (§5), filled from findings + answers. If a CLAUDE.md
-     already exists, *enrich* it (append the Dev-workflow section + any missing standard sections)
-     rather than replace it.
+     already exists, insert only the managed marker-sections (Dev-workflow + any missing standard
+     sections) into it and leave everything else byte-for-byte; never rewrite the user's prose.
    - `docs/devlog/` scaffold: `README.md` (layout + status table), `decisions.md` (seed decision 1:
      "Adopted devflow workflow"), `sessions/<today>.md` (onboarding summary), `HANDOFF.md` seed.
    - **Best-effort** project-memory seed: a short project-overview note (and `MEMORY.md` index line)
@@ -238,6 +287,7 @@ A small, stable block that the generic commands read so they need no HMD specifi
 | `Restart commands` | the exact commands to restart those processes in a fresh session | continue-work |
 | `Test command` | the project's test entry point(s) | save-work, continue-work, verification |
 | `Stateful resources` | e.g. a DB migration revision to confirm (if any) | save-work, continue-work |
+| `Push policy` | whether/where to push after save-work (e.g. `origin <branch>`, or `none`) | save-work |
 | `Scratch ledger` | path of the SDD ledger (default `.superpowers/sdd/progress.md`) | guard, save-work |
 
 For a library/CLI with no long-running processes, Run/Restart/Stateful are "none" and
@@ -267,13 +317,16 @@ Dev-workflow section / `docs/devlog/`). It:
 ## 8. Build order (for the implementation plan)
 
 1. Plugin skeleton: `.claude-plugin/plugin.json` + `marketplace.json` + `README.md`.
-2. Generic guard: `hooks/devlog_guard.py` + `hooks/hooks.json` (the one code unit — TDD it).
-3. Commands: `save-work.md`, `continue-work.md` (generic ports reading the §5.1 contract).
-4. `templates/*` (CLAUDE.md.tmpl, devlog-README, phase-README, decisions, HANDOFF, session).
-5. `init-workflow.md` (two-mode; depends on templates existing).
+2. Generic guard (the one code unit — TDD it first): `hooks/devlog_guard.py` +
+   `tests/test_devlog_guard.py` + the launchers `hooks/run-guard.{cmd,sh}` + `hooks/hooks.json`.
+3. Commands: `save-work.md`, `continue-work.md` (generic ports reading the §5.1 contract, with all
+   §10 hardening baked into the instructions).
+4. `templates/*` (CLAUDE.md.tmpl + marker-section file, devlog-README, phase-README, decisions,
+   HANDOFF, session, `guard.json`) — all managed content wrapped in `devflow:*` markers.
+5. `init-workflow.md` (two-mode; root resolution + refresh-mode; depends on templates existing).
 6. `document-feature.md`, `demo-guide.md`.
 7. `skills/devflow-method/SKILL.md`.
-8. README + local-install + verification pass.
+8. README + local-install + the full §9 verification pass.
 
 ## 9. Verification plan
 
@@ -292,10 +345,59 @@ Dev-workflow section / `docs/devlog/`). It:
 - **save-work / continue-work round-trip:** in a bootstrapped repo, make a half-done change, run
   save-work (confirm clean tree + HANDOFF.md written), then continue-work (confirm it resumes from
   the HANDOFF).
-- **The guard's own test:** a pytest for `devlog_guard.py` covering no-ledger, missing `Devlog-dir:`,
-  a normal task missing each required file, a controller task, and the all-present pass case.
+- **The guard's own test:** a pytest for `devlog_guard.py` covering: no-ledger; missing
+  `Devlog-dir:`; a normal task missing each required file in turn; a tracked-but-uncommitted file
+  (must NOT satisfy); a controller task (report+review only); the all-present pass case;
+  `enabled:false` config (no-op); an unparseable `guard.json` (falls back to defaults); and
+  `stop_hook_active` set (no-op). Plus a smoke test that each launcher finds a Python and exits 0
+  when the structure is absent.
 
-## 10. Open questions (confirm during build)
+## 10. Robustness & edge cases
+
+**Graceful degradation (global principle).** Every command is written to **never leave a half-state**
+and to **report rather than fail**. If a step cannot complete (no git remote, unwritable memory dir,
+a process that won't start), it records that plainly in its output/HANDOFF and continues with the
+rest — it does not abort the whole save/resume.
+
+**`save-work` hardening:**
+- **No git / not a repo:** detect and tell the user; still write `HANDOFF.md` so context is captured,
+  skip the commit/verify steps, and say so.
+- **No remote / offline:** the push step is **conditional** — push only if an `origin` (or the
+  dev-workflow `Push policy`) exists and is reachable; otherwise note "not pushed (no remote)".
+- **Detached HEAD / mid-rebase/merge:** detect and stop with a clear message rather than committing
+  into a detached or conflicted state.
+- **Secret safety:** before `git add -A`, respect `.gitignore` and scan would-be-staged files for
+  obvious secret signatures (`.env`, key files, high-entropy tokens); if any match, pause and ask
+  rather than committing — honoring "never commit secrets or client data".
+- **Nothing to do:** a clean tree with current docs → save-work still writes/refreshes `HANDOFF.md`
+  and reports "tree clean, no WIP" (idempotent).
+
+**`continue-work` hardening:**
+- **Missing/stale HANDOFF:** if absent, or its timestamp is far behind the latest commit, stop and
+  ask where to resume — never guess a start point.
+- **Process restart failure:** if a listed Run/Restart command fails, report the failure and the
+  command, and continue with what it can — don't loop or silently proceed as if it started.
+- **Reality vs handoff mismatch:** run the quickest proof (named test / commit exists); on a
+  contradiction, stop and surface the specific mismatch before doing the next action.
+- **Divergent git history:** if HEAD has rewound below the handoff's noted commit or the branch
+  differs, flag it; a HEAD merely *ahead* is fine.
+
+**Plugin-upgrade semantics.** The per-repo stamped files are the project's own committed record and
+are **never** silently rewritten by a plugin update; only `init-workflow` refresh-mode touches them,
+and only the marker-sections, only when the user runs it. The commands/guard/skill live in the
+plugin and upgrade centrally, so every bootstrapped repo benefits from a fix with no per-repo action.
+Backward-compat rule: a guard change must keep reading old ledgers; a template change must keep old
+markers valid.
+
+**Concurrency / parallel sessions.** `save-work` refuses while an in-flight subagent it dispatched is
+still running (its partial work can't be frozen). The guard is read-only except via git queries and
+is safe to run concurrently. The HANDOFF is single-writer by nature (one save-work at a time).
+
+**Internationalization of paths.** All paths are treated as relative to the resolved project root;
+no absolute or user-name-specific paths are written into any stamped file, so a bootstrapped repo is
+portable across machines and users.
+
+## 11. Open questions (confirm during build)
 
 - Exact plugin + command names final? (`devflow`, `/devflow:save-work`, …)
 - Should `document-feature` / `demo-guide` be included from the start, or deferred until after the
