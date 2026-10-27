@@ -148,7 +148,7 @@ def test_review_diff_requires_digit_after_r(tmp_path):
         (p / name).write_text("x", encoding="utf-8")
     (p / "tests" / "task-01-tests.txt").write_text("x", encoding="utf-8")
     # a .diff that is NOT task-01-r<digit> must not satisfy the diff requirement
-    (p / "reviews" / "task-01-notes.diff").write_text("x", encoding="utf-8")
+    (p / "reviews" / "task-01-rollback-notes.diff").write_text("x", encoding="utf-8")
     _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
     _commit_all(tmp_path)
     g = _import_guard()
