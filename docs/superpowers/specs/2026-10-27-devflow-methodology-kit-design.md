@@ -90,6 +90,47 @@ a marketplace and install `devflow` from it. Install path documented in the READ
 /plugin install devflow@devflow-kit
 ```
 
+## 2.3 What `/devflow:save-work` guarantees — the stale-data sweep
+
+`save-work` is a faithful port of HMD's `/save_work`, preserving its hard rule verbatim:
+
+> After save-work, **no living doc may contain a statement the current code/state contradicts.**
+
+Behavior (every run, in order):
+
+1. **Block on in-flight subagents** — if an implementer/reviewer Agent is still running, stop and
+   tell the user to let it finish or cancel; a running agent's partial work cannot be frozen.
+2. **Survey true state** — `git status`/`branch`/`log`; identify active phase, plan, spec, ledger,
+   and the exact task + sub-step in progress; list background processes started and any stateful
+   resource revision (e.g. DB migration).
+3. **Preserve uncommitted work** — commit any dirty tree as `wip(save_work): …` with the project
+   trailer; never `reset --hard` / `checkout --` / `clean` / `stash drop`.
+4. **Exhaustive stale-data sweep (the core guarantee).** Not "update the file I was in." For every
+   term the session **removed, renamed, re-pathed, re-scoped, or shipped**, grep it across every
+   living doc and fix each hit. The living-doc set:
+   - `CLAUDE.md` (goal, architecture, run/test, decisions table, dev-workflow section, any
+     deployment/version line)
+   - **project memory** + the `MEMORY.md` index (update status lines; fix/add/delete notes)
+   - `docs/devlog/decisions.md`
+   - spec/plan **status** (delivered → DELIVERED/LIVE; superseded → marked, never deleted)
+   - `docs/guidebook/*`, `docs/demo-guide/*`
+   - release / changelog / deploy / rollback notes
+   - the active SDD ledger (`docs/devlog/<phase>/progress.md`)
+   - the day's session file (`docs/devlog/sessions/<today>.md`)
+   - **Portability note:** unlike HMD's hardcoded list, the generic command **discovers** the
+     project's actual living docs — `CLAUDE.md`, everything under `docs/`, the memory dir, release
+     notes, the ledger — and sweeps whatever it finds, so the guarantee holds for any project shape.
+5. **Write the resume contract** → `docs/devlog/HANDOFF.md` (overwritten each time): timestamp,
+   branch + HEAD, wip hash if any, active phase/plan/spec/ledger, the **single exact next action**,
+   task-status snapshot, background processes to restart (exact commands), stateful revision, any
+   open question, and the footer "run `/devflow:continue-work`".
+6. **Commit + verify** — commit the handoff + doc updates; confirm `git status` is clean.
+7. **Report** 3–5 lines: where things stand, the single next action, whether a wip commit was made.
+
+Honest limits: the sweep is an LLM-driven discipline (same bar HMD runs at), not a formal proof;
+and memory writes are best-effort — if the harness memory dir is unwritable, save-work updates
+everything else and says so rather than failing.
+
 ## 3. The Stop-hook guard (the one piece of real code)
 
 `hooks/devlog_guard.py` is the HMD guard, generalized:
