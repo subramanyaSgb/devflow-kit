@@ -1,0 +1,4 @@
+# devflow-kit local/scratch
+.superpowers/
+__pycache__/
+*.pyc
