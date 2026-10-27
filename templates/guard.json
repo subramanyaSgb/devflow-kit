@@ -1,0 +1,7 @@
+{
+  "scratch_ledger": ".superpowers/sdd/progress.md",
+  "required_normal": ["brief", "report", "review", "diff", "tests"],
+  "required_closeout": ["report", "review"],
+  "closeout_keywords": ["close-out", "closeout", "controller"],
+  "enabled": true
+}

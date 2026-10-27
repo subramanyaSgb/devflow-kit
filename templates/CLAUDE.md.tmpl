@@ -1,0 +1,49 @@
+# CLAUDE.md — <PROJECT NAME>
+
+<!-- devflow:begin goal v1 -->
+> **Goal:** <one sharp sentence>. Full design: `docs/superpowers/specs/<spec>.md` (the source of truth).
+<!-- devflow:end goal -->
+
+<!-- devflow:begin hard-rule v1 -->
+## HARD RULE: full development documentation
+
+Everything is documented in `docs/devlog/` and committed together with the work.
+- Plans, task briefs, implementer reports (with real failing→passing test output), review verdicts,
+  per-task test results (`docs/devlog/<phase>/tests/task-NN-tests.txt`), decisions, and session
+  summaries all live there. See `docs/devlog/README.md`.
+- **Never delete or overwrite** specs/plans/devlog files. Mark superseded ones "SUPERSEDED by …".
+- A task is not done until its devlog entries exist (brief, report, review, review diff,
+  `tests/task-NN-tests.txt`, ledger row). The Stop-hook guard enforces this.
+<!-- devflow:end hard-rule -->
+
+<!-- devflow:begin working-rules v1 -->
+## Working rules
+
+- Verify against reality before assuming.
+- **Ask when in doubt** — surface unclear decisions to the user.
+- Process: superpowers skills (brainstorming → writing-plans → implementation) with a devlog trail.
+- **Never commit secrets or client data.**
+<!-- devflow:end working-rules -->
+
+## Decisions (agreed with the user)
+
+| # | Topic | Decision |
+|---|---|---|
+| 1 | Workflow | Adopted devflow (devlog trail + handoffs + guard) |
+
+## Architecture
+
+<filled from the codebase (onboard) or grows as built (greenfield)>
+
+## Running
+
+<how to start / test the project>
+
+<!-- devflow:begin dev-workflow v1 -->
+## Dev workflow (devflow)
+<!-- (stamped from claude-devworkflow-section.md) -->
+<!-- devflow:end dev-workflow -->
+
+## Open questions (confirm during build)
+
+- <none yet>
