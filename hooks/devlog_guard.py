@@ -56,7 +56,7 @@ def _load_config(root: pathlib.Path) -> dict:
 def _git_set(root: pathlib.Path, args: list[str]) -> set[str]:
     try:
         r = subprocess.run(["git", *args], cwd=str(root),
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=10)
         if r.returncode != 0:
             return set()
         return {ln.strip().replace("\\", "/") for ln in r.stdout.splitlines() if ln.strip()}
@@ -65,7 +65,7 @@ def _git_set(root: pathlib.Path, args: list[str]) -> set[str]:
         return set()
 
 
-def _required_files(n: int, is_closeout: bool, kinds: list[str]) -> list[tuple[str, str]]:
+def _required_files(n: int, kinds: list[str]) -> list[tuple[str, str]]:
     """Return (label, kind) pairs; kind 'diff' is a glob-prefix, others exact."""
     nn = f"{n:02d}"
     out = []
@@ -112,7 +112,6 @@ def evaluate(root: pathlib.Path) -> list[str]:
     if not completed:
         return []
 
-    tracked = _git_set(root, ["ls-files", "--", phase_dir])
     committed = _git_set(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", phase_dir])
 
     def present_exact(rel: str) -> bool:
@@ -121,7 +120,12 @@ def evaluate(root: pathlib.Path) -> list[str]:
 
     def present_glob(prefix: str) -> bool:
         full = f"{phase_dir}/{prefix}"
-        return any(f.startswith(full) and f.endswith(".diff") for f in committed)
+        for f in committed:
+            if f.startswith(full) and f.endswith(".diff"):
+                rest = f[len(full):]
+                if rest[:1].isdigit():
+                    return True
+        return False
 
     missing: list[str] = []
     for n in sorted(completed):
@@ -129,7 +133,7 @@ def evaluate(root: pathlib.Path) -> list[str]:
         is_closeout = any(k in line for k in cfg["closeout_keywords"])
         kinds = cfg["required_closeout"] if is_closeout else cfg["required_normal"]
         gaps = []
-        for label, kind in _required_files(n, is_closeout, kinds):
+        for label, kind in _required_files(n, kinds):
             ok = present_glob(label) if kind == "glob" else present_exact(label)
             if not ok:
                 gaps.append(label + ("*.diff" if kind == "glob" else ""))
@@ -143,13 +147,18 @@ def main() -> None:
         payload = json.load(sys.stdin)
     except Exception:
         payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
     if payload.get("stop_hook_active"):
         sys.exit(0)
-    root = pathlib.Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
     try:
+        root = pathlib.Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
         missing = evaluate(root)
     except Exception as e:
-        _debug(root, f"evaluate crashed: {e}")
+        try:
+            _debug(pathlib.Path(os.getcwd()), f"main crashed: {e}")
+        except Exception:
+            pass
         sys.exit(0)
     if missing:
         reason = (

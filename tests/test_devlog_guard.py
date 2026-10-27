@@ -127,3 +127,33 @@ def test_stop_hook_active_exits_zero_via_cli(tmp_path):
                        capture_output=True, text=True,
                        env={"CLAUDE_PROJECT_DIR": str(tmp_path), "PATH": __import__("os").environ["PATH"]})
     assert r.returncode == 0 and r.stdout.strip() == ""
+
+def test_non_object_json_stdin_exits_zero(tmp_path):
+    import os as _os
+    _init_repo(tmp_path)
+    _phase(tmp_path)
+    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
+    _commit_all(tmp_path)
+    for payload in ("null", "123", '"hi"', "[1,2]", "true"):
+        r = subprocess.run([sys.executable, str(GUARD)], input=payload,
+                           capture_output=True, text=True,
+                           env={"CLAUDE_PROJECT_DIR": str(tmp_path),
+                                "PATH": _os.environ["PATH"]})
+        assert r.returncode == 0, f"stdin={payload!r} -> rc={r.returncode} stderr={r.stderr}"
+
+def test_review_diff_requires_digit_after_r(tmp_path):
+    _init_repo(tmp_path)
+    p = _phase(tmp_path)
+    for name in ["task-01-brief.md", "task-01-report.md", "task-01-review.md"]:
+        (p / name).write_text("x", encoding="utf-8")
+    (p / "tests" / "task-01-tests.txt").write_text("x", encoding="utf-8")
+    # a .diff that is NOT task-01-r<digit> must not satisfy the diff requirement
+    (p / "reviews" / "task-01-notes.diff").write_text("x", encoding="utf-8")
+    _ledger(tmp_path, "Devlog-dir: docs/devlog/phase1\nTask 1: complete\n")
+    _commit_all(tmp_path)
+    g = _import_guard()
+    assert g.evaluate(tmp_path) != []       # still missing a real review diff
+    (p / "reviews" / "task-01-r1.diff").write_text("x", encoding="utf-8")
+    _commit_all(tmp_path, "add r1")
+    g2 = _import_guard()
+    assert g2.evaluate(tmp_path) == []
