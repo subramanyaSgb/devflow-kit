@@ -1,0 +1,8 @@
+{
+  "name": "devflow",
+  "version": "0.1.0",
+  "description": "Portable development methodology: session handoffs, a committed devlog trail, a fail-open Stop-hook guard, and a two-mode project bootstrap.",
+  "author": { "name": "Deevia" },
+  "license": "MIT",
+  "keywords": ["workflow", "devlog", "handoff", "tdd", "documentation", "bootstrap"]
+}

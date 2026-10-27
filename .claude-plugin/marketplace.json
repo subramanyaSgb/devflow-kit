@@ -1,0 +1,7 @@
+{
+  "name": "devflow-kit",
+  "owner": { "name": "Deevia" },
+  "plugins": [
+    { "name": "devflow", "source": "." }
+  ]
+}
